@@ -1,0 +1,117 @@
+"""LangGraph orchestration of the Psycho-World multi-agent workflow."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Dict
+
+from langgraph.graph import END, StateGraph
+
+from .agents import ActionAgent, PerceptionAgent, PlanningAgent, SimulationAgent
+from .config import settings
+from .knowledge import COKEKGraph
+from .memory import MemGPTManager
+from .types import GlobalState, KnowledgeContext
+from .vectorstore import BGEVectorStore
+
+LOGGER = logging.getLogger(__name__)
+
+
+class PsychoWorldGraph:
+    """High-level façade that wires the MAS nodes together with LangGraph."""
+
+    def __init__(
+        self,
+        *,
+        memory_manager: MemGPTManager | None = None,
+        vector_store: BGEVectorStore | None = None,
+        knowledge_graph: COKEKGraph | None = None,
+        perception: PerceptionAgent | None = None,
+        planning: PlanningAgent | None = None,
+        simulation: SimulationAgent | None = None,
+        action: ActionAgent | None = None,
+    ) -> None:
+        self._memory_manager = memory_manager or MemGPTManager()
+        self._vector_store = vector_store or BGEVectorStore()
+        self._knowledge_graph = knowledge_graph or COKEKGraph()
+        self._perception = perception or PerceptionAgent()
+        self._planning = planning or PlanningAgent()
+        self._simulation = simulation or SimulationAgent()
+        self._action = action or ActionAgent()
+        self._graph = self._build_graph()
+
+    def _build_graph(self):
+        graph = StateGraph(GlobalState)
+        graph.add_node("memory", self._memory_node)
+        graph.add_node("perception", self._perception_node)
+        graph.add_node("planning", self._planning_node)
+        graph.add_node("simulation", self._simulation_node)
+        graph.add_node("action", self._action_node)
+        graph.set_entry_point("memory")
+        graph.add_edge("memory", "perception")
+        graph.add_edge("perception", "planning")
+        graph.add_edge("planning", "simulation")
+        graph.add_edge("simulation", "action")
+        graph.add_edge("action", END)
+        return graph.compile()
+
+    def invoke(self, user_input: str, user_id: str = "default") -> Dict[str, Any]:
+        initial_state: GlobalState = {
+            "user_input": user_input,
+            "user_id": user_id,
+            "diagnostics": {},
+        }
+        return self._graph.invoke(initial_state)
+
+    # Node implementations -------------------------------------------------
+
+    def _memory_node(self, state: GlobalState) -> GlobalState:
+        user_id = state.get("user_id", "default")
+        mem = self._memory_manager.load_context(user_id, settings.recall_top_k)
+        working = [{"role": slice.role, "content": slice.content} for slice in mem["working"]]
+        recall = mem["recall"]
+        archival = mem["archival"]
+        retrieved = self._vector_store.search(state["user_input"], settings.recall_top_k)
+        rag_snippets = [doc.text for doc in retrieved]
+        knowledge = KnowledgeContext(
+            coke_paths=[],
+            rag_snippets=rag_snippets,
+            neo4j_metadata={},
+        )
+        updated = dict(state)
+        updated["working_context"] = working
+        updated["recall_memory"] = recall
+        updated["archival_memory"] = archival
+        updated["knowledge_context"] = knowledge
+        return updated
+
+    def _perception_node(self, state: GlobalState) -> GlobalState:
+        updated = self._perception(state)
+        if updated["risk_level"] >= settings.risk_threshold and not settings.enable_system2:
+            LOGGER.warning("High risk detected but System 2 disabled.")
+        return updated
+
+    def _planning_node(self, state: GlobalState) -> GlobalState:
+        belief = state["belief_state"]
+        knowledge = state.get("knowledge_context")
+        if self._knowledge_graph and knowledge and belief.distortions:
+            coke_paths = self._knowledge_graph.fetch_paths(
+                situation=state["user_input"],
+                belief=belief.distortions[0],
+            )
+            knowledge.coke_paths = coke_paths
+        return self._planning(state)
+
+    def _simulation_node(self, state: GlobalState) -> GlobalState:
+        if not settings.enable_system2:
+            return state
+        return self._simulation(state)
+
+    def _action_node(self, state: GlobalState) -> GlobalState:
+        return self._action(state)
+
+    # Optional utility -----------------------------------------------------
+
+    def ingest_memory(self, text: str, metadata: Dict[str, Any]) -> None:
+        """Add a document to the local vector store for recall."""
+        self._vector_store.add(text, metadata)
