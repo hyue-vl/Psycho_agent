@@ -55,6 +55,11 @@ class PsychoWorldGraph:
         graph.add_edge("action", END)
         return graph.compile()
 
+    @property
+    def memory_manager(self) -> MemGPTManager:
+        """Expose the memory manager to allow external session orchestration."""
+        return self._memory_manager
+
     def invoke(self, user_input: str, user_id: str = "default") -> Dict[str, Any]:
         initial_state: GlobalState = {
             "user_input": user_input,
@@ -130,7 +135,21 @@ class PsychoWorldGraph:
         return self._simulation(state)
 
     def _action_node(self, state: GlobalState) -> GlobalState:
-        return self._action(state)
+        updated = self._action(state)
+        final_response = updated.get("final_response")
+        if final_response:
+            user_id = state.get("user_id", "default")
+            self._memory_manager.recall_append(
+                user_id,
+                [
+                    {
+                        "role": "assistant",
+                        "content": final_response,
+                        "metadata": {"topic": "agent_reply", "tags": ["assistant", "response"]},
+                    }
+                ],
+            )
+        return updated
 
     # Optional utility -----------------------------------------------------
 

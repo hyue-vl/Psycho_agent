@@ -35,10 +35,12 @@ Psycho-World 是一个“纯推理”多智能体心理干预系统，基于语�
 ```bash
 pip install -e .
 export QWEN_API_KEY=...
-python -m psycho_agent.cli chat "我最近又梦到考试失败" --user-id u123
+python -m psycho_agent.cli chat --user-id u123
+# 也可以传入首轮用户输入并开启诊断输出
+python -m psycho_agent.cli chat "我最近又梦到考试失败" --user-id u123 --diagnostics
 ```
 
-CLI 会输出行动节点生成的回复以及完整诊断信息（自洽结果、策略候选、模拟奖励等）。
+CLI 会进入多轮对话循环，按 `exit`（或 `Ctrl+D`）即可结束。整个会话期间，用户与 Agent 的发言都会写回 MemGPT/Letta 记忆空间，便于之后的上下文召回与个性化干预；可选的 `--diagnostics` 标志会在每轮回复后输出自洽结果、策略候选、模拟奖励等调试信息。
 
 ## 开发与测试
 
