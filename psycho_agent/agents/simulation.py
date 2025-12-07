@@ -10,18 +10,18 @@ from ..config import settings
 from ..llm import QwenLLM
 from ..types import BeliefState, GlobalState, StrategyCandidate
 
-SIM_PROMPT = """You are a CBT user simulator that must obey the supplied therapy graph snippets.
-Run a graph-constrained rollout with depth <= {depth}, narrating how the user moves through the chain.
-Respond ONLY with JSON matching:
+SIM_PROMPT = """你是一名必须遵守所给治疗图谱片段的 CBT 用户模拟器。
+请在深度 <= {depth} 的限制下进行图约束 rollout，并叙述用户如何沿着图中的链条推进。
+只能返回符合以下结构的 JSON：
 {{
-  "thought_rollout": ["step explaining how graph edge is traversed", "..."],
+  "thought_rollout": ["说明如何沿图边前进的步骤", "..."],
   "projection": {{
     "projected_distortions": ["..."],
-    "projected_emotion_valence": 1-10 integer,
-    "projected_emotion_arousal": 1-10 integer,
-    "projected_risk": 0-1 float,
-    "reaction": "<first-person reply>",
-    "justification": "<tie back to provided graph evidence>"
+    "projected_emotion_valence": 1-10 的整数,
+    "projected_emotion_arousal": 1-10 的整数,
+    "projected_risk": 0-1 的浮点数,
+    "reaction": "<以第一人称写出的用户回复>",
+    "justification": "<把推断与提供的图谱证据对应起来>"
   }}
 }}"""
 

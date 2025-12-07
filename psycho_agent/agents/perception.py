@@ -7,16 +7,16 @@ from typing import List
 from ..llm import QwenLLM, SelfConsistencyRunner
 from ..types import BeliefState, GlobalState
 
-DOT_PROMPT = """You are a clinical psychologist performing Diagnosis of Thought (DoT).
-Analyse the user's latest message and the provided conversation summary.
-Return a JSON object with the keys:
-- cognitive_distortions: list of CBT distortion labels
-- emotion_valence: integer 1-10 (10 positive)
-- emotion_arousal: integer 1-10 (10 intense)
-- communicative_intent: short phrase for latent intent
-- risk_level: 0-1 float representing crisis likelihood
-- rationale: 2-3 sentence explanation
-Ensure valid JSON."""
+DOT_PROMPT = """你是一名执行思维诊断（DoT, Diagnosis of Thought）的临床心理学家。
+请分析用户最新消息以及提供的对话摘要。
+只返回一个包含以下键的 JSON：
+- cognitive_distortions：列出对应的 CBT 认知扭曲标签
+- emotion_valence：1-10 的整数（10 表示高度积极）
+- emotion_arousal：1-10 的整数（10 表示情绪强烈）
+- communicative_intent：一句话概括潜在意图
+- risk_level：0-1 的浮点数，代表危机发生的可能性
+- rationale：2-3 句中文解释，说明推理依据
+务必输出有效 JSON。"""
 
 
 class PerceptionAgent:

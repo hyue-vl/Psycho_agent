@@ -12,9 +12,9 @@ from ..llm import QwenLLM
 from ..types import BeliefState, GlobalState, StrategyCandidate
 
 
-PLAN_SYSTEM_PROMPT = """You are the Planning Agent inside a CBT therapy assistant.
-Always run a Tree-of-Thought search with maximum depth {depth} to explore at least {branches} distinct strategies.
-Valid strategies are limited to:
+PLAN_SYSTEM_PROMPT = """你是 CBT 治疗助手中的规划代理。
+请务必运行最大深度为 {depth} 的思维树（Tree-of-Thought）搜索，并至少探索 {branches} 条不同策略分支。
+可选策略仅限：
 - Empathic Reflection
 - Socratic Questioning
 - Cognitive Restructuring
@@ -22,13 +22,13 @@ Valid strategies are limited to:
 - Distress Tolerance
 - Mindfulness Grounding
 - Safety Planning
-Respond ONLY with JSON. The top-level value must be a list where each item contains:
+只能返回 JSON，顶层必须是列表，每个元素包含：
 {{
-  "strategy": "<one of the valid strategies>",
-  "thought_chain": ["step 1", "..."],
-  "rationale": "<why this branch is promising>",
-  "draft_response": "<short therapist utterance>",
-  "score": 0-1 float capturing expected reward
+  "strategy": "<以上合法策略之一>",
+  "thought_chain": ["推理步骤1", "..."],
+  "rationale": "<为什么该分支值得保留>",
+  "draft_response": "<治疗师的简短回复>",
+  "score": 0-1 的浮点数，表示预期奖励
 }}"""
 
 
