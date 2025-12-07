@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import math
 import re
 import time
@@ -10,7 +12,11 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from .config import settings
+from .llm import QwenLLM
 from .types import MemorySlice
+
+LOGGER = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
 # Text utilities
@@ -69,6 +75,31 @@ def _make_summary(content: str, keywords: Sequence[str]) -> str:
     return content[:180]
 
 
+def _normalize_tuples(value: Any) -> List[Tuple[str, str, str]]:
+    if not value:
+        return []
+    if isinstance(value, dict):
+        items = value.get("tuples") or value.get("data") or value.get("memory") or []
+    else:
+        items = value
+    tuples: List[Tuple[str, str, str]] = []
+    for item in items:
+        if isinstance(item, dict):
+            subject = str(item.get("subject") or item.get("s") or "").strip()
+            relation = str(item.get("relation") or item.get("r") or "").strip()
+            obj = str(item.get("object") or item.get("o") or "").strip()
+        elif isinstance(item, (list, tuple)) and len(item) >= 3:
+            subject = str(item[0]).strip()
+            relation = str(item[1]).strip()
+            obj = str(item[2]).strip()
+        else:
+            continue
+        triple = (subject, relation, obj)
+        if all(triple):
+            tuples.append(triple)
+    return tuples
+
+
 def _now() -> float:
     return time.time()
 
@@ -122,6 +153,7 @@ class MemoryNote:
     metadata: Dict[str, Any]
     timestamp: float
     importance: float = 0.0
+    tuples: List[Tuple[str, str, str]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -129,6 +161,113 @@ class MemoryProfile:
     notes: Dict[str, MemoryNote] = field(default_factory=dict)
     core_memory: Dict[str, str] = field(default_factory=dict)
 
+
+class TupleMemoryEncoder:
+    """LLM-backed encoder that converts free text into (subject, relation, object) tuples."""
+
+    SYSTEM_PROMPT = """你是会话记忆提取器。\
+将输入压缩成若干三元组（subject, relation, object），用于长期记忆检索。\
+输出 JSON，对象结构为 {"tuples": [{"subject": "...", "relation": "...", "object": "..."}]}。\
+subject 可以是“来访者”“治疗师”或文本中的核心实体；relation 需要是动词或短语；object 写关键信息。\
+如果信息不足，可以只返回 1-2 个高价值三元组，不要输出空字符串。"""
+
+    def __init__(
+        self,
+        *,
+        llm: Optional[QwenLLM] = None,
+        temperature: float = 0.1,
+        max_tokens: int = 512,
+    ) -> None:
+        self._llm = llm or QwenLLM(
+            model=settings.qwen.small_model,
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+            timeout_ms=min(settings.qwen.timeout, 4000),
+        )
+
+    def encode(self, role: str, content: str, context: Optional[str] = None) -> List[Tuple[str, str, str]]:
+        """Return tuple memories extracted from the content."""
+        text = (content or "").strip()
+        if not text:
+            return []
+        payload = (
+            f"角色: {role}\n"
+            f"场景: {context or 'general'}\n"
+            f"原文: {text}\n"
+            "请给出 1-3 个中文三元组。"
+        )
+        tuples: List[Tuple[str, str, str]] = []
+        try:
+            raw = self._llm.chat(
+                [
+                    {"role": "system", "content": self.SYSTEM_PROMPT},
+                    {"role": "user", "content": payload},
+                ],
+                max_tokens=512,
+                temperature=0.2,
+            )
+            tuples = self._parse_response(raw)
+        except Exception as exc:  # pragma: no cover - network paths
+            LOGGER.debug("TupleMemoryEncoder fallback due to error: %s", exc)
+        return tuples or self._fallback(role, text)
+
+    def _parse_response(self, raw: str) -> List[Tuple[str, str, str]]:
+        if not raw:
+            return []
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+        if isinstance(data, dict):
+            candidates = data.get("tuples") or data.get("memory") or data.get("data") or []
+        elif isinstance(data, list):
+            candidates = data
+        else:
+            return []
+        triples: List[Tuple[str, str, str]] = []
+        for item in candidates:
+            subj: Optional[str]
+            rel: Optional[str]
+            obj: Optional[str]
+            if isinstance(item, dict):
+                subj = item.get("subject") or item.get("s")
+                rel = item.get("relation") or item.get("r")
+                obj = item.get("object") or item.get("o")
+            elif isinstance(item, (list, tuple)) and len(item) >= 3:
+                subj, rel, obj = item[:3]
+            else:
+                continue
+            cleaned = [self._clean_field(value) for value in (subj, rel, obj)]
+            if all(cleaned):
+                triples.append(tuple(cleaned))  # type: ignore[arg-type]
+        return triples
+
+    @staticmethod
+    def _clean_field(value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    def _fallback(self, role: str, content: str) -> List[Tuple[str, str, str]]:
+        keywords = _tokenize(content)
+        triples: List[Tuple[str, str, str]] = []
+        if keywords:
+            triples.append((role or "speaker", "关注", keywords[0]))
+            if len(keywords) > 1:
+                triples.append((role or "speaker", "重复提到", keywords[1]))
+        snippet = content[:80]
+        if snippet:
+            triples.append((role or "speaker", "陈述", snippet))
+        # Deduplicate while preserving order
+        seen = set()
+        ordered: List[Tuple[str, str, str]] = []
+        for triple in triples:
+            if triple in seen:
+                continue
+            seen.add(triple)
+            ordered.append(triple)
+        return ordered[:3]
 
 class KeywordExtractor:
     """Very small helper that emulates structured note taking."""
@@ -205,6 +344,7 @@ class MemoryGraph:
                     "links": list(note.links),
                     "metadata": dict(note.metadata),
                     "importance": note.importance,
+                    "tuples": [tuple(item) for item in note.tuples],
                 }
                 for note in profile.notes.values()
             ],
@@ -219,6 +359,8 @@ class MemoryGraph:
         context = metadata.get("context") or metadata.get("topic") or role
         importance = float(metadata.get("score", 0.0))
         importance = max(importance, min(1.0, len(content) / 400.0))
+        metadata = dict(metadata)
+        tuple_memory = _normalize_tuples(metadata.pop("tuples", None))
         return MemoryNote(
             note_id=str(metadata.get("note_id") or uuid.uuid4()),
             role=role,
@@ -231,6 +373,7 @@ class MemoryGraph:
             metadata=dict(metadata),
             timestamp=_now(),
             importance=importance,
+            tuples=tuple_memory,
         )
 
     def _find_related_notes(
@@ -293,6 +436,7 @@ class AMemMemoryManager:
 
     formatter: MemoryFormatter = field(default_factory=MemoryFormatter)
     graph: MemoryGraph = field(default_factory=MemoryGraph)
+    tuple_encoder: TupleMemoryEncoder = field(default_factory=TupleMemoryEncoder)
 
     def load_context(
         self,
@@ -317,16 +461,20 @@ class AMemMemoryManager:
     def recall_append(self, user_id: str, entries: List[Dict[str, Any] | MemorySlice]) -> None:
         for entry in entries:
             if isinstance(entry, MemorySlice):
-                metadata = {"summary": entry.content[:120], "tags": ["legacy"]}
-                self.graph.add_entry(user_id, entry.role, entry.content, metadata)
+                metadata = {"summary": entry.content[:120], "tags": ["legacy"], "context": entry.role}
+                enriched = self._annotate_with_tuples(entry.role, entry.content, metadata)
+                self.graph.add_entry(user_id, entry.role, entry.content, enriched)
                 continue
             if not entry.get("content"):
                 continue
+            role = entry.get("role", "user")
+            metadata = entry.get("metadata") or {}
+            enriched = self._annotate_with_tuples(role, entry["content"], metadata)
             self.graph.add_entry(
                 user_id=user_id,
-                role=entry.get("role", "user"),
+                role=role,
                 content=entry["content"],
-                metadata=entry.get("metadata"),
+                metadata=enriched,
             )
 
     def update_core(self, user_id: str, fields: Dict[str, str]) -> None:
@@ -338,11 +486,13 @@ class AMemMemoryManager:
     # Helpers ----------------------------------------------------------- #
 
     def _note_to_slice(self, note: MemoryNote) -> MemorySlice:
+        tuple_repr = "; ".join(" | ".join(triple) for triple in note.tuples[:3]) or "None"
         detail = (
             f"{note.summary}\n"
             f"Context: {note.context}\n"
             f"Keywords: {', '.join(note.keywords[:6])}\n"
             f"Tags: {', '.join(note.tags[:8])}\n"
+            f"Tuples: {tuple_repr}\n"
             f"Links: {', '.join(note.links[:6]) or 'None'}\n"
             f"Detail: {note.content[: self.formatter.max_content_chars]}"
         )
@@ -379,6 +529,20 @@ class AMemMemoryManager:
         for key, value in profile["core_memory"].items():
             formatted.append(self.formatter.format_archival(key, value))
         return formatted
+
+    def _annotate_with_tuples(
+        self,
+        role: str,
+        content: str,
+        metadata: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        metadata = dict(metadata or {})
+        if not self.tuple_encoder:
+            return metadata
+        tuples = self.tuple_encoder.encode(role, content, metadata.get("context") or metadata.get("topic"))
+        if tuples:
+            metadata["tuples"] = tuples
+        return metadata
 
 
 # Backwards compatibility --------------------------------------------------- #

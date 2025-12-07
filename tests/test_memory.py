@@ -1,8 +1,18 @@
 from psycho_agent.memory import AMemMemoryManager, MemoryGraph
 
 
+class _StubTupleEncoder:
+    def encode(self, role, content, context=None):
+        # deterministic triple for tests without hitting real LLM
+        snippet = (context or content or "")[:12] or "context"
+        return [(role or "actor", "提及", snippet)]
+
+
 def test_amem_links_related_notes():
-    manager = AMemMemoryManager(graph=MemoryGraph(link_threshold=0.1))
+    manager = AMemMemoryManager(
+        graph=MemoryGraph(link_threshold=0.1),
+        tuple_encoder=_StubTupleEncoder(),
+    )
     manager.recall_append(
         "u1",
         [
@@ -36,10 +46,11 @@ def test_amem_links_related_notes():
     second_links = set(by_id[note_ids[1]]["links"])
     assert note_ids[1] in first_links
     assert note_ids[0] in second_links
+    assert notes[0]["tuples"]
 
 
 def test_amem_load_context_returns_structured_slices():
-    manager = AMemMemoryManager()
+    manager = AMemMemoryManager(tuple_encoder=_StubTupleEncoder())
     manager.recall_append(
         "demo",
         [
@@ -52,3 +63,4 @@ def test_amem_load_context_returns_structured_slices():
     assert len(context["recall"]) == 3
     assert len(context["working"]) == 2
     assert "Keywords:" in context["recall"][0].content
+    assert "Tuples:" in context["recall"][0].content

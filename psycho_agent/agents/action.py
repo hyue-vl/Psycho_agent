@@ -10,10 +10,10 @@ from ..llm import QwenLLM
 from ..types import GlobalState, StrategyCandidate
 
 
-ACTION_PROMPT = """You are the Action Agent responsible for delivering therapist responses.
-You receive the chosen strategy, a draft reply, and safety constraints.
-Refine the reply so that it is empathic, safe, and aligned with CBT best practices.
-Explicitly acknowledge emotions, reference relevant coping tools, and invite collaboration."""
+ACTION_PROMPT = """你是负责输出治疗师回复的 Action Agent。
+你会收到已选策略、草稿回复以及安全约束。
+请润色草稿，使其更具同理心、安全合规，并符合 CBT 最佳实践。
+务必明确共情地回应情绪、引用相关的应对工具，并邀请用户协作。"""
 
 
 @dataclass
