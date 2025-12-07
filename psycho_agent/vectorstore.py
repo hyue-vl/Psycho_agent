@@ -32,6 +32,7 @@ class BGEVectorStore:
     """Manages local BGE embeddings and FAISS search for semantic recall."""
 
     documents: List[VectorDocument] = field(default_factory=list)
+    min_similarity: float = 0.25
 
     def __post_init__(self) -> None:
         try:
@@ -76,16 +77,34 @@ class BGEVectorStore:
     def search(self, query: str, top_k: int = 5) -> List[VectorDocument]:
         if not self.documents:
             return []
-        if self._model is None or self._index is None:
-            return sorted(
-                self.documents,
-                key=lambda doc: -self._keyword_match(query, doc.text),
-            )[:top_k]
-        query_vec = self._embed([query])
-        scores, indices = self._index.search(query_vec, top_k)
-        return [self.documents[idx] for idx in indices[0] if idx != -1]
+        hits: List[Tuple[int, float]] = []
+        if self._model is not None and self._index is not None:
+            query_vec = self._embed([query])
+            search_k = min(top_k, len(self.documents))
+            scores, indices = self._index.search(query_vec, search_k)
+            hits = [
+                (idx, score)
+                for idx, score in zip(indices[0], scores[0])
+                if idx != -1 and score >= self.min_similarity
+            ]
+        if hits:
+            ordered = sorted(hits, key=lambda item: item[1], reverse=True)[:top_k]
+            return [self.documents[idx] for idx, _ in ordered]
+        return self._keyword_fallback(query, top_k)
 
     @staticmethod
     def _keyword_match(query: str, text: str) -> int:
         overlap = set(query.split()) & set(text.split())
         return len(overlap)
+
+    def _keyword_fallback(self, query: str, top_k: int) -> List[VectorDocument]:
+        scored = []
+        for doc in self.documents:
+            score = self._keyword_match(query, doc.text)
+            scored.append((doc, score))
+        scored.sort(key=lambda item: (item[1], item[0].metadata.get("timestamp", 0.0)), reverse=True)
+        hits = [doc for doc, score in scored if score > 0][:top_k]
+        if hits:
+            return hits
+        # Final fallback: most recent documents
+        return list(reversed(self.documents[-top_k:]))

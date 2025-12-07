@@ -27,7 +27,7 @@ class BeliefState:
 class KnowledgeContext:
     coke_paths: List[str] = field(default_factory=list)
     rag_snippets: List[str] = field(default_factory=list)
-    neo4j_metadata: Dict[str, Any] = field(default_factory=dict)
+    kb_metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -38,6 +38,7 @@ class StrategyCandidate:
     projected_belief: Optional[BeliefState] = None
     reward_vector: Optional[Dict[str, float]] = None
     projected_reaction: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class GlobalState(TypedDict, total=False):
