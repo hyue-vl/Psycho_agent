@@ -15,8 +15,14 @@ class StubVectorStore:
 
 @dataclass
 class StubMemory:
-    def load_context(self, user_id, top_k):
+    def load_context(self, user_id, top_k, fallback_snippets=None, query=None):
         return {"working": [], "recall": [], "archival": []}
+
+    def recall_append(self, user_id, entries):
+        return None
+
+    def core_memory_replace(self, user_id, fields):
+        return None
 
 
 class StubGraph:

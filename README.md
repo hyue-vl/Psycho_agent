@@ -15,7 +15,7 @@ Psycho-World 是一个“纯推理”多智能体心理干预系统，基于语�
 | --- | --- | --- |
 | Qwen 接口 | `psycho_agent/llm/qwen.py` | 复用提供的 OpenAI 兼容客户端，负责所有 LLM 调用 |
 | 自洽诊断 | `psycho_agent/agents/perception.py` | DoT Prompt + Self-Consistency 多票合并，输出结构化信念态 |
-| 记忆管理 | `psycho_agent/memory.py`, `psycho_agent/vectorstore.py` | MemGPT PKB + BGE/FAISS 回忆检索，支持 fallback |
+| 记忆管理 | `psycho_agent/memory.py`, `psycho_agent/vectorstore.py` | A-MEM Agentic Memory：Zettelkasten 风格的结构化笔记 + 动态链接网络 |
 | 图谱约束 | `psycho_agent/knowledge/coke_graph.py` | Neo4j COKE 查询，策略映射与模拟约束 |
 | 规划/推演 | `psycho_agent/agents/planning.py`, `psycho_agent/agents/simulation.py` | Tree-of-Thought 策略生成 + Graph-Constrained Simulation |
 | LangGraph 工作流 | `psycho_agent/workflow.py` | 可依赖注入的 MAS 编排，暴露 `PsychoWorldGraph.invoke()` |
@@ -40,7 +40,14 @@ python -m psycho_agent.cli chat --user-id u123
 python -m psycho_agent.cli chat "我最近又梦到考试失败" --user-id u123 --diagnostics
 ```
 
-CLI 会进入多轮对话循环，按 `exit`（或 `Ctrl+D`）即可结束。默认情况下每一轮都会展示 Workflow trace（记忆抽取、规划树、模拟评分、行动提示等关键节点），并且整个会话期间，用户与 Agent 的发言都会写回 MemGPT/Letta 记忆空间，便于之后的上下文召回与个性化干预；若还需要完整原始 JSON，可开启 `--diagnostics`。
+CLI 会进入多轮对话循环，按 `exit`（或 `Ctrl+D`）即可结束。默认情况下每一轮都会展示 Workflow trace（记忆抽取、规划树、模拟评分、行动提示等关键节点），并且整个会话期间，用户与 Agent 的发言都会写入 A-MEM 记忆网络（可选通往 Letta Hook），形成带有关键词、标签与链接的知识节点；若还需要完整原始 JSON，可开启 `--diagnostics`。
+
+### A-MEM 记忆系统
+
+- **结构化笔记生成**：每条新记忆都被总结为带有上下文描述、重要关键词、标签的综合笔记，方便快速浏览。
+- **动态索引与链接**：系统会自动分析历史记忆，使用关键词/标签相似度建立有意义的连接，形成 Zettelkasten 式的知识网络；新记忆会反向更新既有节点的标签和上下文，体现“记忆演化”。
+- **上下文检索**：`load_context()` 会基于查询关键词 + 新近性打分，返回工作记忆（前 2 条）与回忆记忆集合；若本地记忆为空，会回退到 RAG 片段。
+- **可观测性**：通过 CLI Workflow trace 或 `AMemMemoryManager.export_profile()` 可以查看当前用户的记忆网络拓扑，用于调试或可视化。
 
 ## 开发与测试
 

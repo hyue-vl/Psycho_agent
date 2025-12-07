@@ -10,7 +10,7 @@ from langgraph.graph import END, StateGraph
 from .agents import ActionAgent, PerceptionAgent, PlanningAgent, SimulationAgent
 from .config import settings
 from .knowledge import COKEKGraph
-from .memory import MemGPTManager
+from .memory import AMemMemoryManager
 from .types import GlobalState, KnowledgeContext
 from .vectorstore import BGEVectorStore
 
@@ -23,7 +23,7 @@ class PsychoWorldGraph:
     def __init__(
         self,
         *,
-        memory_manager: MemGPTManager | None = None,
+        memory_manager: AMemMemoryManager | None = None,
         vector_store: BGEVectorStore | None = None,
         knowledge_graph: COKEKGraph | None = None,
         perception: PerceptionAgent | None = None,
@@ -31,7 +31,7 @@ class PsychoWorldGraph:
         simulation: SimulationAgent | None = None,
         action: ActionAgent | None = None,
     ) -> None:
-        self._memory_manager = memory_manager or MemGPTManager()
+        self._memory_manager = memory_manager or AMemMemoryManager()
         self._vector_store = vector_store or BGEVectorStore()
         self._knowledge_graph = knowledge_graph or COKEKGraph()
         self._perception = perception or PerceptionAgent()
@@ -78,6 +78,7 @@ class PsychoWorldGraph:
             user_id,
             settings.recall_top_k,
             fallback_snippets=rag_snippets,
+            query=state["user_input"],
         )
         self._memory_manager.recall_append(
             user_id,
