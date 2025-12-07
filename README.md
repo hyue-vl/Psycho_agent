@@ -40,7 +40,7 @@ python -m psycho_agent.cli chat --user-id u123
 python -m psycho_agent.cli chat "我最近又梦到考试失败" --user-id u123 --diagnostics
 ```
 
-CLI 会进入多轮对话循环，按 `exit`（或 `Ctrl+D`）即可结束。整个会话期间，用户与 Agent 的发言都会写回 MemGPT/Letta 记忆空间，便于之后的上下文召回与个性化干预；可选的 `--diagnostics` 标志会在每轮回复后输出自洽结果、策略候选、模拟奖励等调试信息。
+CLI 会进入多轮对话循环，按 `exit`（或 `Ctrl+D`）即可结束。默认情况下每一轮都会展示 Workflow trace（记忆抽取、规划树、模拟评分、行动提示等关键节点），并且整个会话期间，用户与 Agent 的发言都会写回 MemGPT/Letta 记忆空间，便于之后的上下文召回与个性化干预；若还需要完整原始 JSON，可开启 `--diagnostics`。
 
 ## 开发与测试
 
