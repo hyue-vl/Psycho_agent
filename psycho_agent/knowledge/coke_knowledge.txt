@@ -1,0 +1,20 @@
+situation: Replaying an argument with a partner
+thought: They must secretly despise me because of one fight
+emotion: Fearful shame
+core_beliefs: unlovable; abandonment
+distortions: mind reading; catastrophizing
+interventions: Socratic Questioning; Cognitive Restructuring; Empathic Reflection
+---
+situation: Preparing for a high-stakes exam after one failure
+thought: Failing once proves I will always fail
+emotion: Hopelessness
+core_beliefs: incompetence; helplessness
+distortions: overgeneralization; fortune telling
+interventions: Behavioural Activation; Distress Tolerance; Growth Evidence Log
+---
+situation: Caring for a parent with chronic illness
+thought: If I rest, everything will collapse and it will be my fault
+emotion: Guilt-laced anxiety
+core_beliefs: responsibility schema; hypervigilance
+distortions: emotional reasoning; should statements
+interventions: Mindfulness Grounding; Boundary Setting Reframe; Safety Planning

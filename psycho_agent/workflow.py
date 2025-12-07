@@ -67,16 +67,30 @@ class PsychoWorldGraph:
 
     def _memory_node(self, state: GlobalState) -> GlobalState:
         user_id = state.get("user_id", "default")
-        mem = self._memory_manager.load_context(user_id, settings.recall_top_k)
+        retrieved = self._vector_store.search(state["user_input"], settings.recall_top_k)
+        rag_snippets = [doc.text for doc in retrieved]
+        mem = self._memory_manager.load_context(
+            user_id,
+            settings.recall_top_k,
+            fallback_snippets=rag_snippets,
+        )
+        self._memory_manager.recall_append(
+            user_id,
+            [
+                {
+                    "role": "user",
+                    "content": state["user_input"],
+                    "metadata": {"topic": "latest_query"},
+                }
+            ],
+        )
         working = [{"role": slice.role, "content": slice.content} for slice in mem["working"]]
         recall = mem["recall"]
         archival = mem["archival"]
-        retrieved = self._vector_store.search(state["user_input"], settings.recall_top_k)
-        rag_snippets = [doc.text for doc in retrieved]
         knowledge = KnowledgeContext(
             coke_paths=[],
             rag_snippets=rag_snippets,
-            neo4j_metadata={},
+            kb_metadata={},
         )
         updated = dict(state)
         updated["working_context"] = working
@@ -87,6 +101,14 @@ class PsychoWorldGraph:
 
     def _perception_node(self, state: GlobalState) -> GlobalState:
         updated = self._perception(state)
+        belief = updated.get("belief_state")
+        if belief:
+            summary = {
+                "last_intent": belief.communicative_intent,
+                "last_distortions": ", ".join(belief.distortions),
+                "risk_level": str(belief.risk_level),
+            }
+            self._memory_manager.core_memory_replace(state.get("user_id", "default"), summary)
         if updated["risk_level"] >= settings.risk_threshold and not settings.enable_system2:
             LOGGER.warning("High risk detected but System 2 disabled.")
         return updated
