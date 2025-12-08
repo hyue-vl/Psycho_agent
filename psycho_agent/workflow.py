@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 
 from langgraph.graph import END, StateGraph
 
-from .agents import ActionAgent, AffectiveStateMachine, PerceptionAgent, PlanningAgent, SimulationAgent
+from .agents import ActionAgent, AffectiveStateMachine, PerceptionAgent, PlanningAgent
 from .config import settings
 from .knowledge import COKEKGraph
 from .memory import AMemMemoryManager, MemGPTManager
@@ -28,7 +28,6 @@ class PsychoWorldGraph:
         knowledge_graph: COKEKGraph | None = None,
         perception: PerceptionAgent | None = None,
         planning: PlanningAgent | None = None,
-        simulation: SimulationAgent | None = None,
         action: ActionAgent | None = None,
         state_machine: AffectiveStateMachine | None = None,
     ) -> None:
@@ -37,7 +36,6 @@ class PsychoWorldGraph:
         self._knowledge_graph = knowledge_graph or COKEKGraph()
         self._perception = perception or PerceptionAgent()
         self._planning = planning or PlanningAgent()
-        self._simulation = simulation or SimulationAgent()
         self._action = action or ActionAgent()
         self._state_machine = state_machine or AffectiveStateMachine()
         self._graph = self._build_graph()
@@ -47,13 +45,11 @@ class PsychoWorldGraph:
         graph.add_node("memory", self._memory_node)
         graph.add_node("perception", self._perception_node)
         graph.add_node("planning", self._planning_node)
-        graph.add_node("simulation", self._simulation_node)
         graph.add_node("action", self._action_node)
         graph.set_entry_point("memory")
         graph.add_edge("memory", "perception")
         graph.add_edge("perception", "planning")
-        graph.add_edge("planning", "simulation")
-        graph.add_edge("simulation", "action")
+        graph.add_edge("planning", "action")
         graph.add_edge("action", END)
         return graph.compile()
 
@@ -137,8 +133,8 @@ class PsychoWorldGraph:
             diagnostics = updated.setdefault("diagnostics", {})
             sm_diag = diagnostics.setdefault("affective_state", {})
             sm_diag["posterior"] = posterior.to_dict()
-        if updated["risk_level"] >= settings.risk_threshold and not settings.enable_system2:
-            LOGGER.warning("High risk detected but System 2 disabled.")
+        if updated["risk_level"] >= settings.risk_threshold:
+            LOGGER.warning("High risk detected; ensure safety escalation outside the agent.")
         return updated
 
     def _planning_node(self, state: GlobalState) -> GlobalState:
@@ -151,11 +147,6 @@ class PsychoWorldGraph:
             )
             knowledge.coke_paths = coke_paths
         return self._planning(state)
-
-    def _simulation_node(self, state: GlobalState) -> GlobalState:
-        if not settings.enable_system2:
-            return state
-        return self._simulation(state)
 
     def _action_node(self, state: GlobalState) -> GlobalState:
         updated = self._action(state)

@@ -25,10 +25,6 @@ class QwenSettings:
         "QWEN_PLANNER_MODEL",
         os.getenv("QWEN_SMALL_MODEL", "Qwen/Qwen2.5-7B-Instruct"),
     )
-    simulation_model: str = os.getenv(
-        "QWEN_SIM_MODEL",
-        os.getenv("QWEN_SMALL_MODEL", "Qwen/Qwen2.5-7B-Instruct"),
-    )
     temperature: float = float(os.getenv("QWEN_TEMPERATURE", "0.2"))
     timeout: int = int(os.getenv("QWEN_TIMEOUT_MS", "60000"))
     max_output_tokens: int = int(os.getenv("QWEN_MAX_TOKENS", "1024"))
@@ -92,7 +88,6 @@ class Settings:
     letta: LettaConfig = field(default_factory=LettaConfig)
     planner: PlannerConfig = field(default_factory=PlannerConfig)
     reward_weights: RewardWeights = field(default_factory=RewardWeights)
-    enable_system2: bool = _bool_env("ENABLE_SYSTEM2", True)
     risk_threshold: float = float(os.getenv("RISK_THRESHOLD", "0.6"))
     recall_top_k: int = int(os.getenv("RECALL_TOP_K", "5"))
     rag_top_k: int = int(os.getenv("RAG_TOP_K", "3"))

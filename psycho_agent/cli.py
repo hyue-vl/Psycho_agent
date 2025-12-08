@@ -15,8 +15,6 @@ WORKFLOW_KEYS = [
     ("perception", "Perception"),
     ("planning_prompt", "Planning Prompt"),
     ("planning_tree", "Planning Tree"),
-    ("simulation_outputs", "Simulation Scorecards"),
-    ("simulation_rollouts", "Simulation Rollouts"),
     ("action_prompt", "Action Prompt"),
 ]
 
