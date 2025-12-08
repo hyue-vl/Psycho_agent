@@ -1,13 +1,13 @@
 # Psycho-World Agent
 
-Psycho-World 是一个“纯推理”多智能体心理干预系统，基于语义化重构的 POMDP 框架与 LangGraph 的循环编排，实现 System-2 级别的多步规划与“梦境推演”能力。该实现复现了问题描述中的五大节点：感知、记忆、规划、模拟与行动，并将 Qwen 远程大模型与本地 BGE 语义检索、COKE 图谱、MemGPT 记忆结构整合在同一个推理图中。
+Psycho-World 是一个“纯推理”多智能体心理干预系统，基于语义化重构的 POMDP 框架与 LangGraph 的循环编排，实现 System-2 级别的多步规划。该实现覆盖感知、记忆、规划与行动四大节点，并将 Qwen 远程大模型与本地 BGE 语义检索、COKE 图谱、MemGPT 记忆结构整合在同一个推理图中。
 
 ## 架构概览
 
 - **语义状态空间 (`GlobalState`)**：包括 MemGPT 管理的工作记忆/回忆/归档切片、显式 JSON 信念态 `BeliefState`、动态图知识 `KnowledgeContext` 以及策略候选。
 - **动作空间**：Planner 以 Tree-of-Thoughts 思路输出多策略集合 `<k_t, u_t>`，Action Agent 负责在约束下生成最终语言动作。
-- **转移/奖励**：Simulation Agent 通过图约束 LLM 推演 `s_{t+1}`，同时产出多维奖励向量（安全、共情、一致性、状态改善），由 Action Agent 按权重汇总。
-- **多智能体编排**：LangGraph 构建 Memory ➜ Perception ➜ Planning ➜ Simulation ➜ Action 图；满足高风险路径触发 System-2（ToT/MCTS）推理的自适应策略。
+- **转移/奖励**：Affective State Machine 结合用户画像与最新观测更新 `s_{t+1}`，Action Agent 使用 Planner 的评分权重输出最终回复。
+- **多智能体编排**：LangGraph 构建 Memory ➜ Perception ➜ Planning ➜ Action 图，保持高风险路径下的多步推理能力。
 
 ## 关键模块
 
@@ -17,7 +17,7 @@ Psycho-World 是一个“纯推理”多智能体心理干预系统，基于语�
 | 自洽诊断 | `psycho_agent/agents/perception.py` | DoT Prompt + Self-Consistency 多票合并，输出结构化信念态 |
 | 记忆管理 | `psycho_agent/memory.py`, `psycho_agent/vectorstore.py` | A-MEM Agentic Memory：Zettelkasten 风格的结构化笔记 + 动态链接网络 |
 | 图谱约束 | `psycho_agent/knowledge/coke_graph.py` | Neo4j COKE 查询，策略映射与模拟约束 |
-| 规划/推演 | `psycho_agent/agents/planning.py`, `psycho_agent/agents/simulation.py` | Tree-of-Thought 策略生成 + Graph-Constrained Simulation |
+| 规划 | `psycho_agent/agents/planning.py` | Tree-of-Thought 策略生成与评分 |
 | LangGraph 工作流 | `psycho_agent/workflow.py` | 可依赖注入的 MAS 编排，暴露 `PsychoWorldGraph.invoke()` |
 | CLI | `psycho_agent/cli.py` | `typer` 命令行触发一次完整对话轮次 |
 
@@ -28,7 +28,7 @@ Psycho-World 是一个“纯推理”多智能体心理干预系统，基于语�
 - `QWEN_BASE_URL`, `QWEN_API_KEY`, `QWEN_MODEL_PATH`
 - `BGE_MODEL_PATH=/data0/hy/models/bge-m3`
 - `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`
-- `ENABLE_SYSTEM2`, `PLANNER_BRANCHES`, `RISK_THRESHOLD` 等控制推理强度
+- `PLANNER_BRANCHES`, `RISK_THRESHOLD` 等控制推理强度
 
 ## 快速开始
 
@@ -40,7 +40,7 @@ python -m psycho_agent.cli chat --user-id u123
 python -m psycho_agent.cli chat "我最近又梦到考试失败" --user-id u123 --diagnostics
 ```
 
-CLI 会进入多轮对话循环，按 `exit`（或 `Ctrl+D`）即可结束。默认情况下每一轮都会展示 Workflow trace（记忆抽取、规划树、模拟评分、行动提示等关键节点），并且整个会话期间，用户与 Agent 的发言都会写入 A-MEM 记忆网络（可选通往 Letta Hook），形成带有关键词、标签与链接的知识节点；若还需要完整原始 JSON，可开启 `--diagnostics`。
+CLI 会进入多轮对话循环，按 `exit`（或 `Ctrl+D`）即可结束。默认情况下每一轮都会展示 Workflow trace（记忆抽取、规划树、行动提示等关键节点），并且整个会话期间，用户与 Agent 的发言都会写入 A-MEM 记忆网络（可选通往 Letta Hook），形成带有关键词、标签与链接的知识节点；若还需要完整原始 JSON，可开启 `--diagnostics`。
 
 ### A-MEM 记忆系统
 
@@ -54,7 +54,7 @@ CLI 会进入多轮对话循环，按 `exit`（或 `Ctrl+D`）即可结束。默
 - 依赖管理：`pyproject.toml`
 - 单元测试：`pytest tests/test_workflow.py`
   - 通过依赖注入（Stub VectorStore/MemGPT/LLM）验证 LangGraph 管线可独立运行
-- 建议在开发环境中设置 `ENABLE_SYSTEM2=0`，仅在高风险场景启用 ToT/MCTS，避免不必要的 token 成本。
+- 建议在开发环境中限制 `PLANNER_BRANCHES` / `PLANNER_DEPTH` 以控制 Tree-of-Thought 成本。
 
 ## 下一步可扩展点
 

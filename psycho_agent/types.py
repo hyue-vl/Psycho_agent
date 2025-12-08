@@ -103,7 +103,7 @@ class RewardVector(TypedDict):
     improvement: float
 
 
-AgentNode = Literal["memory", "perception", "planning", "simulation", "action"]
+AgentNode = Literal["memory", "perception", "planning", "action"]
 
 
 def _clamp01(value: float) -> float:

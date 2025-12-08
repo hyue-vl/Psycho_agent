@@ -1,9 +1,9 @@
-"""Constraint-based response generator selecting best simulated strategy."""
+"""Constraint-based response generator selecting best planner strategy."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..config import settings
 from ..llm import QwenLLM
@@ -39,13 +39,17 @@ class ActionAgent:
         return updated
 
     def _pick(self, strategies: List[StrategyCandidate]) -> StrategyCandidate:
-        best = max(
-            strategies,
-            key=lambda s: self._score(s.reward_vector or {}),
-        )
-        return best
+        return max(strategies, key=self._combined_score)
 
-    def _score(self, vector: Dict[str, float]) -> float:
+    def _combined_score(self, strategy: StrategyCandidate) -> float:
+        reward_score = self._score_reward(strategy.reward_vector)
+        if reward_score is not None:
+            return reward_score
+        return self._metadata_score(strategy.metadata)
+
+    def _score_reward(self, vector: Optional[Dict[str, float]]) -> Optional[float]:
+        if not vector:
+            return None
         weights = settings.reward_weights
         return (
             vector.get("safety", 0) * weights.safety
@@ -54,14 +58,27 @@ class ActionAgent:
             + vector.get("improvement", 0) * weights.improvement
         )
 
+    @staticmethod
+    def _metadata_score(metadata: Dict[str, Any]) -> float:
+        raw = metadata.get("score")
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return 0.0
+
     def _build_prompt(self, strategy: StrategyCandidate, state: GlobalState) -> str:
         risk = state.get("risk_level", 0.0)
         guardrail = "Activate safety planning and escalation protocols." if risk >= settings.risk_threshold else ""
+        thought_chain = " -> ".join(strategy.metadata.get("thought_chain", []))
+        planner_score = strategy.metadata.get("score")
+        belief = state.get("belief_state")
         return (
             f"Strategy: {strategy.label}\n"
             f"Draft: {strategy.draft_response}\n"
-            f"Projected belief: {strategy.projected_belief}\n"
-            f"Simulated user reaction: {strategy.projected_reaction}\n"
+            f"Planner rationale: {strategy.rationale}\n"
+            f"Thought chain: {thought_chain or 'n/a'}\n"
+            f"Planner score: {planner_score}\n"
+            f"Observed belief: {belief}\n"
             f"Risk level: {risk}\n"
             f"{guardrail}"
         )

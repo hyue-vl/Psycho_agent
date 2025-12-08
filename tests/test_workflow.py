@@ -54,15 +54,6 @@ class StubPlanning:
         return state
 
 
-class StubSimulation:
-    def __call__(self, state):
-        state = dict(state)
-        for strategy in state["strategies"]:
-            strategy.reward_vector = {"safety": 1.0, "empathy": 0.9, "adherence": 0.8, "improvement": 0.7}
-            strategy.projected_belief = state["belief_state"]
-        return state
-
-
 class StubAction:
     def __call__(self, state):
         state = dict(state)
@@ -77,7 +68,6 @@ def test_workflow_invocation_smoke():
         knowledge_graph=StubGraph(),
         perception=StubPerception(),
         planning=StubPlanning(),
-        simulation=StubSimulation(),
         action=StubAction(),
     )
     result = agent.invoke("I failed my exam")
