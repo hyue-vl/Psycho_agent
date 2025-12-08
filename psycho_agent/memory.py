@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import re
 import time
 import uuid
+from datetime import datetime, timezone
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .config import settings
@@ -161,6 +164,230 @@ class MemoryProfile:
     notes: Dict[str, MemoryNote] = field(default_factory=dict)
     core_memory: Dict[str, str] = field(default_factory=dict)
 
+
+_DEFAULT_HISTORY_DIR = Path(
+    os.getenv("PSYCHO_AGENT_HISTORY_DIR")
+    or (Path(__file__).resolve().parent / "conversation_logs")
+)
+
+
+class PersistentHistoryLogger:
+    """Writes per-user interaction history to disk as JSONL + TXT."""
+
+    def __init__(
+        self,
+        base_dir: Optional[str | Path] = None,
+        *,
+        create_text_mirror: bool = True,
+    ) -> None:
+        root = Path(base_dir) if base_dir is not None else _DEFAULT_HISTORY_DIR
+        self._jsonl_dir = root / "jsonl"
+        self._txt_dir = root / "txt"
+        self._create_text_mirror = create_text_mirror
+        self._jsonl_dir.mkdir(parents=True, exist_ok=True)
+        if self._create_text_mirror:
+            self._txt_dir.mkdir(parents=True, exist_ok=True)
+
+    def append(self, user_id: str, event: Dict[str, Any]) -> None:
+        """Persist the structured event and optionally a readable mirror."""
+        payload = dict(event)
+        payload.setdefault("logged_at", _now())
+        self._write_jsonl(user_id, payload)
+        if self._create_text_mirror:
+            self._write_text(user_id, payload)
+
+    # Internal helpers -------------------------------------------------- #
+
+    def _jsonl_path(self, user_id: str) -> Path:
+        return self._jsonl_dir / f"{user_id}.jsonl"
+
+    def _txt_path(self, user_id: str) -> Path:
+        return self._txt_dir / f"{user_id}.txt"
+
+    def _write_jsonl(self, user_id: str, payload: Dict[str, Any]) -> None:
+        line = json.dumps(payload, ensure_ascii=False)
+        try:
+            with self._jsonl_path(user_id).open("a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+        except OSError as exc:  # pragma: no cover - filesystem hiccups
+            LOGGER.error("Unable to persist memory jsonl for %s: %s", user_id, exc)
+
+    def _write_text(self, user_id: str, payload: Dict[str, Any]) -> None:
+        timestamp = payload.get("timestamp") or payload.get("logged_at") or _now()
+        iso = datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
+        role = payload.get("role", "unknown").upper()
+        content = payload.get("content", "")
+        annotation = payload.get("annotation") or {}
+        note_id = payload.get("note_id")
+        annotation_tags = annotation.get("personalization_tags") or annotation.get("tags") or []
+        summary = payload.get("summary") or ""
+        lines = [
+            f"[{iso}] ({note_id}) {role}: {content}",
+            f"Summary: {summary}",
+        ]
+        if annotation:
+            lines.append(
+                "Annotation: "
+                + json.dumps(
+                    {
+                        "intent": annotation.get("intent"),
+                        "strategy": annotation.get("strategy"),
+                        "risk_level": annotation.get("risk_level"),
+                        "tags": annotation_tags,
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        text_line = "\n".join(lines) + "\n"
+        try:
+            with self._txt_path(user_id).open("a", encoding="utf-8") as fh:
+                fh.write(text_line)
+        except OSError as exc:  # pragma: no cover - filesystem hiccups
+            LOGGER.error("Unable to persist memory txt for %s: %s", user_id, exc)
+
+
+class InteractionAnnotator:
+    """LLM-backed annotator that labels agent responses for future tuning."""
+
+    SYSTEM_PROMPT = """你是一名对话数据标注助手，负责为治疗师的回复生成训练标签。\
+输出 JSON，字段包含: \
+intent (string), strategy (string), tone (string), risk_level (low|medium|high), \
+personalization_tags (array of short tokens), follow_up (bool), training_notes (string)。\
+根据用户输入与治疗师回复，提炼最重要的信息。"""
+
+    _RISK_KEYWORDS = {"自杀", "suicide", "die", "kill", "伤害", "病危", "危机"}
+
+    def __init__(
+        self,
+        *,
+        llm: Optional[QwenLLM] = None,
+        enabled: bool = True,
+        temperature: float = 0.15,
+        max_tokens: int = 320,
+    ) -> None:
+        self._enabled = enabled
+        self._temperature = temperature
+        self._max_tokens = max_tokens
+        self._llm = llm or (QwenLLM(
+            model=settings.qwen.small_model,
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+            timeout_ms=min(settings.qwen.timeout, 4000),
+        ) if enabled else None)
+
+    def annotate(
+        self,
+        *,
+        user_message: Optional[str],
+        assistant_message: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        text = assistant_message.strip()
+        if not text:
+            return None
+        metadata = metadata or {}
+        payload = self._build_payload(user_message, assistant_message, metadata)
+        if not self._enabled or self._llm is None:
+            return self._fallback(user_message, assistant_message, metadata)
+        try:
+            raw = self._llm.chat(
+                [
+                    {"role": "system", "content": self.SYSTEM_PROMPT},
+                    {"role": "user", "content": payload},
+                ],
+                max_tokens=self._max_tokens,
+                temperature=self._temperature,
+            )
+            return self._parse_response(raw, user_message, assistant_message, metadata)
+        except Exception as exc:  # pragma: no cover - network paths
+            LOGGER.debug("InteractionAnnotator fallback due to error: %s", exc)
+            return self._fallback(user_message, assistant_message, metadata)
+
+    # Internal helpers -------------------------------------------------- #
+
+    def _build_payload(
+        self,
+        user_message: Optional[str],
+        assistant_message: str,
+        metadata: Dict[str, Any],
+    ) -> str:
+        tags = metadata.get("tags") or []
+        topic = metadata.get("topic") or metadata.get("context") or "general"
+        prompt = (
+            f"来访者: {user_message or '（无最新输入）'}\n"
+            f"治疗师: {assistant_message}\n"
+            f"语境: {topic}; 标签: {', '.join(tags)}\n"
+            "请给出 JSON 标签。"
+        )
+        return prompt
+
+    def _parse_response(
+        self,
+        raw: str,
+        user_message: Optional[str],
+        assistant_message: str,
+        metadata: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if not raw:
+            return self._fallback(user_message, assistant_message, metadata)
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return self._fallback(user_message, assistant_message, metadata)
+        return self._normalize(data, user_message, assistant_message, metadata)
+
+    def _normalize(
+        self,
+        data: Dict[str, Any],
+        user_message: Optional[str],
+        assistant_message: str,
+        metadata: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        tags = data.get("personalization_tags") or data.get("tags") or []
+        if isinstance(tags, str):
+            tags = [tags]
+        normalized = {
+            "intent": str(data.get("intent") or data.get("label") or ""),
+            "strategy": str(data.get("strategy") or data.get("plan") or ""),
+            "tone": str(data.get("tone") or "supportive"),
+            "risk_level": str(data.get("risk_level") or "low"),
+            "personalization_tags": [str(tag) for tag in tags if tag],
+            "follow_up": bool(data.get("follow_up") or data.get("follow_up_needed")),
+            "training_notes": str(data.get("training_notes") or data.get("notes") or ""),
+            "reference": {
+                "user": user_message,
+                "assistant": assistant_message,
+                "context_tags": metadata.get("tags") or [],
+            },
+        }
+        return normalized
+
+    def _fallback(
+        self,
+        user_message: Optional[str],
+        assistant_message: str,
+        metadata: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        combined = f"{user_message or ''} {assistant_message}".lower()
+        risk = "high" if any(keyword in combined for keyword in self._RISK_KEYWORDS) else "low"
+        strategy = "crisis_management" if risk == "high" else "supportive_reflection"
+        tags = list(metadata.get("tags") or [])
+        if "plan" in combined:
+            tags.append("action_plan")
+        return {
+            "intent": "assist_user",
+            "strategy": strategy,
+            "tone": "supportive",
+            "risk_level": risk,
+            "personalization_tags": sorted(set(tags)),
+            "follow_up": risk != "low",
+            "training_notes": "Auto-generated fallback annotation.",
+            "reference": {
+                "user": user_message,
+                "assistant": assistant_message,
+                "context_tags": metadata.get("tags") or [],
+            },
+        }
 
 class TupleMemoryEncoder:
     """LLM-backed encoder that converts free text into (subject, relation, object) tuples."""
@@ -437,6 +664,9 @@ class AMemMemoryManager:
     formatter: MemoryFormatter = field(default_factory=MemoryFormatter)
     graph: MemoryGraph = field(default_factory=MemoryGraph)
     tuple_encoder: TupleMemoryEncoder = field(default_factory=TupleMemoryEncoder)
+    history_logger: Optional[PersistentHistoryLogger] = field(default_factory=PersistentHistoryLogger)
+    annotator: Optional[InteractionAnnotator] = field(default_factory=InteractionAnnotator)
+    _recent_user_messages: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     def load_context(
         self,
@@ -468,13 +698,23 @@ class AMemMemoryManager:
             if not entry.get("content"):
                 continue
             role = entry.get("role", "user")
-            metadata = entry.get("metadata") or {}
-            enriched = self._annotate_with_tuples(role, entry["content"], metadata)
-            self.graph.add_entry(
+            metadata = dict(entry.get("metadata") or {})
+            content = entry["content"]
+            enriched = self._annotate_with_tuples(role, content, metadata)
+            note = self.graph.add_entry(
                 user_id=user_id,
                 role=role,
-                content=entry["content"],
+                content=content,
                 metadata=enriched,
+            )
+            self._update_recent_messages(user_id, role, content)
+            self._persist_interaction(
+                user_id=user_id,
+                role=role,
+                content=content,
+                metadata=metadata,
+                enriched_metadata=enriched,
+                note=note,
             )
 
     def update_core(self, user_id: str, fields: Dict[str, str]) -> None:
@@ -529,6 +769,48 @@ class AMemMemoryManager:
         for key, value in profile["core_memory"].items():
             formatted.append(self.formatter.format_archival(key, value))
         return formatted
+
+    def _update_recent_messages(self, user_id: str, role: str, content: str) -> None:
+        if role == "user" and content:
+            self._recent_user_messages[user_id] = content
+
+    def _persist_interaction(
+        self,
+        *,
+        user_id: str,
+        role: str,
+        content: str,
+        metadata: Dict[str, Any],
+        enriched_metadata: Dict[str, Any],
+        note: MemoryNote,
+    ) -> None:
+        if not self.history_logger:
+            return
+        annotation: Optional[Dict[str, Any]] = None
+        if self.annotator and role == "assistant":
+            annotation = self.annotator.annotate(
+                user_message=self._recent_user_messages.get(user_id),
+                assistant_message=content,
+                metadata=enriched_metadata,
+            )
+        event = {
+            "event_id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "role": role,
+            "content": content,
+            "summary": note.summary,
+            "context": note.context,
+            "note_id": note.note_id,
+            "timestamp": note.timestamp,
+            "metadata": metadata,
+            "enriched_metadata": enriched_metadata,
+            "tuples": [list(item) for item in note.tuples],
+            "annotation": annotation,
+        }
+        try:
+            self.history_logger.append(user_id, event)
+        except Exception as exc:  # pragma: no cover - log persistence errors
+            LOGGER.error("Failed to persist interaction for %s: %s", user_id, exc)
 
     def _annotate_with_tuples(
         self,
