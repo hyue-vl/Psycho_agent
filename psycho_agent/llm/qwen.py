@@ -6,7 +6,10 @@ import logging
 import threading
 from typing import Any, Dict, List, Optional
 
-from openai import OpenAI
+try:  # pragma: no cover - optional dependency
+    from openai import OpenAI
+except ImportError:  # pragma: no cover - runtime fallback for tests
+    OpenAI = None  # type: ignore[assignment]
 
 from ..config import settings
 
@@ -28,6 +31,11 @@ def get_qwen_client() -> OpenAI:
 
     with _client_lock:
         if _cached_client is None:
+            if OpenAI is None:
+                raise RuntimeError(
+                    "The 'openai' package is required to use QwenLLM. "
+                    "Install psycho-agent with its extra dependencies or add openai manually."
+                )
             LOGGER.debug("Initialising Qwen OpenAI-compatible client at %s", DEFAULT_BASE_URL)
             _cached_client = OpenAI(base_url=DEFAULT_BASE_URL, api_key=DEFAULT_API_KEY)
     return _cached_client
