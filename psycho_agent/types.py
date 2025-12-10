@@ -75,7 +75,6 @@ class StrategyCandidate:
     draft_response: str
     projected_belief: Optional[BeliefState] = None
     reward_vector: Optional[Dict[str, float]] = None
-    projected_reaction: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 

@@ -5,7 +5,52 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional
 
-from langgraph.graph import END, StateGraph
+try:  # pragma: no cover - optional dependency for tests
+    from langgraph.graph import END, StateGraph
+except ImportError:  # pragma: no cover
+    END = "__END__"
+
+    class _CompiledGraph:
+        def __init__(self, nodes, edges, entry):
+            self._nodes = nodes
+            self._edges = edges
+            self._entry = entry
+
+        def invoke(self, state):
+            if self._entry is None:
+                raise RuntimeError("Entry point not set for fallback graph")
+            current = self._entry
+            payload = state
+            visited = 0
+            limit = len(self._nodes) + 2
+            while current != END:
+                node = self._nodes.get(current)
+                if node is None:
+                    raise RuntimeError(f"Undefined node '{current}' in fallback graph")
+                payload = node(payload)
+                current = self._edges.get(current, END)
+                visited += 1
+                if visited > limit:
+                    raise RuntimeError("Fallback graph detected a cycle")
+            return payload
+
+    class StateGraph:  # type: ignore[override]
+        def __init__(self, _state_type):
+            self._nodes = {}
+            self._edges = {}
+            self._entry = None
+
+        def add_node(self, name, fn):
+            self._nodes[name] = fn
+
+        def set_entry_point(self, name):
+            self._entry = name
+
+        def add_edge(self, start, end):
+            self._edges[start] = end
+
+        def compile(self):
+            return _CompiledGraph(self._nodes, self._edges, self._entry)
 
 from .agents import ActionAgent, AffectiveStateMachine, PerceptionAgent, PlanningAgent
 from .config import settings
