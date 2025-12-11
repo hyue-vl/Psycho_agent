@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from ..config import settings
+from ..controller import WorldModelController
 from ..llm import QwenLLM
 from ..types import GlobalState, StrategyCandidate
 
@@ -18,6 +19,8 @@ ACTION_PROMPT = """你是负责输出治疗师回复的 Action Agent。
 
 @dataclass
 class ActionAgent:
+    controller: WorldModelController | None = None
+
     def __post_init__(self) -> None:
         self._llm = QwenLLM()
 
@@ -25,7 +28,8 @@ class ActionAgent:
         strategies = state.get("strategies", [])
         if not strategies:
             return state
-        chosen = self._pick(strategies)
+        user_id = state.get("user_id", "default")
+        chosen, controller_diag = self._select_strategy(user_id, strategies, state)
         prompt = self._build_prompt(chosen, state)
         messages = [
             {"role": "system", "content": ACTION_PROMPT},
@@ -35,10 +39,27 @@ class ActionAgent:
         updated = dict(state)
         updated["selected_strategy"] = chosen
         updated["final_response"] = response.strip()
-        updated.setdefault("diagnostics", {})["action_prompt"] = prompt
+        diagnostics = updated.setdefault("diagnostics", {})
+        diagnostics["action_prompt"] = prompt
+        if controller_diag:
+            diagnostics["controller"] = controller_diag
         return updated
 
-    def _pick(self, strategies: List[StrategyCandidate]) -> StrategyCandidate:
+    def _select_strategy(
+        self,
+        user_id: str,
+        strategies: List[StrategyCandidate],
+        state: GlobalState,
+    ) -> tuple[StrategyCandidate, dict | None]:
+        if self._controller:
+            try:
+                return self._controller.select(user_id, strategies, state)
+            except ValueError:
+                # Fallback to simple scoring if the world model cannot be constructed.
+                pass
+        return self._fallback_pick(strategies), None
+
+    def _fallback_pick(self, strategies: List[StrategyCandidate]) -> StrategyCandidate:
         return max(strategies, key=self._combined_score)
 
     def _combined_score(self, strategy: StrategyCandidate) -> float:

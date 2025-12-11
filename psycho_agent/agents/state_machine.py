@@ -107,18 +107,47 @@ class AffectiveStateMachine:
         action: Optional[StrategyCandidate],
         observation: Optional[BeliefState] = None,
     ) -> AffectiveState:
-        state = self.update_from_observation(user_id, observation)
         label = (action.label if action else self._last_action.get(user_id)) or "generic"
-        profile = self._profiles.get(user_id, UserProfile())
-        delta = self._delta_react(state, label, observation)
-        profile_adjust = self._profile_matrix(profile, label)
-        next_state = self._apply_delta(state, delta, profile_adjust).clamp()
-        self._states[user_id] = next_state
+        predicted = self.simulate_transition(
+            user_id=user_id,
+            action=action,
+            observation=observation,
+            current_state=self.update_from_observation(user_id, observation),
+            action_label=label,
+        )
+        self._states[user_id] = predicted
         if action:
             self._last_action[user_id] = label
         diag = self._diagnostics.setdefault(user_id, TransitionDiagnostics())
-        diag.prediction = next_state
-        return next_state
+        diag.prediction = predicted
+        return predicted
+
+    def simulate_transition(
+        self,
+        user_id: str,
+        action: Optional[StrategyCandidate],
+        observation: Optional[BeliefState] = None,
+        current_state: Optional[AffectiveState] = None,
+        profile_override: Optional[UserProfile] = None,
+        action_label: Optional[str] = None,
+    ) -> AffectiveState:
+        """
+        Predict the next affective state without mutating internal buffers.
+
+        This enables downstream controllers to reason about potential strategies by
+        simulating the latent state evolution conditioned on the current user world
+        model.
+        """
+        state = current_state or self.get_state(user_id)
+        label = action_label or (action.label if action else self._last_action.get(user_id)) or "generic"
+        profile = profile_override or self._profiles.get(user_id, UserProfile())
+        if observation is not None and current_state is None:
+            measurement = self._belief_to_state(observation)
+            weight = self._measurement_weight(observation)
+            state = self._blend(state, measurement, weight).clamp()
+        delta = self._delta_react(state, label, observation)
+        profile_adjust = self._profile_matrix(profile, label)
+        return self._apply_delta(state, delta, profile_adjust).clamp()
 
     def diagnostics(self, user_id: str) -> Dict[str, Dict[str, float]]:
         diag = self._diagnostics.get(user_id)

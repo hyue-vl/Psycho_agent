@@ -122,6 +122,7 @@ def chat(
     def _respect_limit(current_turn: int) -> bool:
         return limit is not None and current_turn >= limit
 
+    opening = opening.strip() if isinstance(opening, str) else opening
     if opening:
         turn += 1
         _process_turn(agent, turn, opening, user_id, workflow, diagnostics)
@@ -139,6 +140,7 @@ def chat(
             console.print("\n[red]Session interrupted by user.[/red]")
             break
         if not user_input:
+            console.print("[dim]输入内容不能为空，按 Enter 不会触发对话。[/dim]")
             continue
         if _should_exit(user_input, tokens):
             console.print("[dim]Session ended by user.[/dim]")

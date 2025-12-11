@@ -54,6 +54,7 @@ except ImportError:  # pragma: no cover
 
 from .agents import ActionAgent, AffectiveStateMachine, PerceptionAgent, PlanningAgent
 from .config import settings
+from .controller import WorldModelController
 from .knowledge import COKEKGraph
 from .memory import AMemMemoryManager, MemGPTManager
 from .types import GlobalState, KnowledgeContext, UserProfile
@@ -81,8 +82,9 @@ class PsychoWorldGraph:
         self._knowledge_graph = knowledge_graph or COKEKGraph()
         self._perception = perception or PerceptionAgent()
         self._planning = planning or PlanningAgent()
-        self._action = action or ActionAgent()
         self._state_machine = state_machine or AffectiveStateMachine()
+        self._controller = WorldModelController(self._state_machine)
+        self._action = action or ActionAgent(controller=self._controller)
         self._graph = self._build_graph()
 
     def _build_graph(self):
